@@ -1,0 +1,2 @@
+check-private-items = true
+standard-macro-braces = [{ name = "children", brace = "[" }]
