@@ -44,7 +44,7 @@ fn setup(
     let mut hue = 0.0_f32;
     let mut next_material = || {
         hue = (hue + 222.5) % 360.0;
-        materials.add(Color::oklch(0.7, 0.12, hue))
+        materials.add(Color::oklch(0.75, 0.12, hue))
     };
 
     let shapes = [
