@@ -11,6 +11,9 @@ categories = ["game-development", "rendering"]
 [dependencies]
 bevy = { version = "0.20.1", default-features = false, features = ["3d", "bevy_sprite", "bevy_sprite_render"] }
 
+[dev-dependencies]
+bevy = { version = "0.20.1", features = ["debug"] }
+
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
