@@ -1,1 +1,4 @@
 /target
+
+# need local bevy checkout for wesl syntax highlighting, contains local to my machine filepaths :)
+wesl.toml
