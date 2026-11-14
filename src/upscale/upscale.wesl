@@ -5,23 +5,23 @@ struct UpscaleSettings {
     origin: vec2<i32>,
 }
 
-@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(0) var source_texture: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> settings: UpscaleSettings;
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
-    let relative = pixel - settings.origin;
+    let offset = pixel - settings.origin;
 
-    if any(relative < vec2<i32>(0)) {
+    if any(offset < vec2<i32>(0)) {
         discard;
     }
 
-    let texel = relative / settings.pixels_per_texel;
-    let dims = vec2<i32>(textureDimensions(tex));
-    if any(texel >= dims) {
+    let texel = offset / settings.pixels_per_texel;
+    let source_size = vec2<i32>(textureDimensions(source_texture));
+    if any(texel >= source_size) {
         discard;
     }
 
-    return textureLoad(tex, texel, 0);
+    return textureLoad(source_texture, texel, 0);
 }

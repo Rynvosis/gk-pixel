@@ -1,5 +1,5 @@
 use bevy::{
-    asset::embedded_asset,
+    asset::{embedded_asset, load_embedded_asset},
     core_pipeline::{Core2d, Core2dSystems, FullscreenShader},
     prelude::*,
     render::{
@@ -29,9 +29,11 @@ pub(super) fn plugin(app: &mut App) {
         UniformComponentPlugin::<UpscaleSettings>::default(),
     ));
 
-    app.sub_app_mut(RenderApp)
-        .add_systems(RenderStartup, init_upscale_pipeline)
-        .add_systems(Core2d, upscale_pass.in_set(Core2dSystems::PostProcess));
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app
+            .add_systems(RenderStartup, init_upscale_pipeline)
+            .add_systems(Core2d, upscale_pass.in_set(Core2dSystems::PostProcess));
+    }
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
@@ -47,8 +49,8 @@ pub(crate) struct UpscaleSource(pub Handle<Image>);
 
 #[derive(Resource)]
 struct UpscalePipeline {
-    layout: BindGroupLayoutDescriptor,
-    pipeline: CachedRenderPipelineId,
+    bind_group_layout: BindGroupLayoutDescriptor,
+    pipeline_id: CachedRenderPipelineId,
 }
 fn init_upscale_pipeline(
     mut commands: Commands,
@@ -56,7 +58,7 @@ fn init_upscale_pipeline(
     fullscreen_shader: Res<FullscreenShader>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    let layout = BindGroupLayoutDescriptor::new(
+    let bind_group_layout = BindGroupLayoutDescriptor::new(
         "upscale_layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::FRAGMENT,
@@ -67,18 +69,21 @@ fn init_upscale_pipeline(
         ),
     );
 
-    let pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+    let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("upscale_pipeline".into()),
-        layout: vec![layout.clone()],
+        layout: vec![bind_group_layout.clone()],
         vertex: fullscreen_shader.to_vertex_state(),
         fragment: Some(FragmentState {
-            shader: asset_server.load("embedded://gk_pixel/upscale/upscale.wesl"),
+            shader: load_embedded_asset!(asset_server.as_ref(), "upscale.wesl"),
             targets: vec![Some(TextureFormat::Rgba8UnormSrgb.into())],
             ..default()
         }),
         ..default()
     });
-    commands.insert_resource(UpscalePipeline { layout, pipeline });
+    commands.insert_resource(UpscalePipeline {
+        bind_group_layout,
+        pipeline_id,
+    });
 }
 
 fn upscale_pass(
@@ -94,7 +99,7 @@ fn upscale_pass(
     mut ctx: RenderContext,
 ) {
     let (view_target, upscale_source, uniform_index) = view.into_inner();
-    let Some(pipeline) = pipeline_cache.get_render_pipeline(upscale_pipeline.pipeline) else {
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(upscale_pipeline.pipeline_id) else {
         return;
     };
     let Some(uniforms_binding) = component_uniforms.uniforms().binding() else {
@@ -107,7 +112,7 @@ fn upscale_pass(
 
     let bind_group = ctx.render_device().create_bind_group(
         "upscale_bind_group",
-        &pipeline_cache.get_bind_group_layout(&upscale_pipeline.layout),
+        &pipeline_cache.get_bind_group_layout(&upscale_pipeline.bind_group_layout),
         &BindGroupEntries::sequential((texture_view, uniforms_binding)),
     );
 

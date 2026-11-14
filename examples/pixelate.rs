@@ -1,10 +1,6 @@
-//! todo docs
+#![expect(missing_docs, reason = "WIP")]
 
-use bevy::app::{App, Startup};
-use bevy::camera::{Camera3d, RenderTarget};
-use bevy::math::Vec3;
 use bevy::prelude::*;
-use bevy::DefaultPlugins;
 use gk_pixel::{PixelCamera, PixelPlugin};
 
 mod common;
@@ -13,7 +9,6 @@ fn main() {
     App::new()
         .add_plugins((DefaultPlugins, common::plugin, PixelPlugin))
         .add_systems(Startup, setup)
-        // .add_systems(Update, view_scene)
         .run();
 }
 

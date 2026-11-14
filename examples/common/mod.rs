@@ -2,27 +2,17 @@
 
 use std::f32::consts::PI;
 
-#[cfg(not(target_arch = "wasm32"))]
-use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::{
-    color::palettes::basic::SILVER,
-    input::common_conditions::{input_just_pressed, input_toggle_active},
-    prelude::*,
+    camera::ScalingMode, color::palettes::basic::SILVER,
+    input::common_conditions::input_just_pressed, prelude::*,
 };
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_plugins((
-        #[cfg(not(target_arch = "wasm32"))]
-        WireframePlugin::default(),
-    ))
-    .add_systems(Startup, setup)
-    .add_systems(
+    app.add_systems(Startup, setup).add_systems(
         Update,
         (
-            rotate.run_if(input_toggle_active(true, KeyCode::KeyR)),
-            advance_rows.run_if(input_just_pressed(KeyCode::Tab)),
-            #[cfg(not(target_arch = "wasm32"))]
-            toggle_wireframe,
+            rotate,
+            toggle_projection.run_if(input_just_pressed(KeyCode::KeyP)),
         ),
     );
 }
@@ -35,6 +25,8 @@ const SHAPES_X_EXTENT: f32 = 14.0;
 const EXTRUSION_X_EXTENT: f32 = 14.0;
 const Z_EXTENT: f32 = 8.0;
 const THICKNESS: f32 = 0.1;
+/// World units visible vertically in orthographic mode
+const ORTHO_VIEWPORT_HEIGHT: f32 = 10.0;
 
 fn setup(
     mut commands: Commands,
@@ -124,7 +116,6 @@ fn setup(
             )
             .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
-            Row::Front,
         ));
     }
 
@@ -142,7 +133,6 @@ fn setup(
             )
             .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
-            Row::Middle,
         ));
     }
 
@@ -160,7 +150,6 @@ fn setup(
             )
             .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
-            Row::Rear,
         ));
     }
 
@@ -181,15 +170,8 @@ fn setup(
         MeshMaterial3d(materials.add(Color::from(SILVER))),
     ));
 
-    let mut text = "\
-        Press 'R' to pause/resume rotation\n\
-        Press 'Tab' to cycle through rows"
-        .to_string();
-    #[cfg(not(target_arch = "wasm32"))]
-    text.push_str("\nPress 'Space' to toggle wireframes");
-
     commands.spawn((
-        Text::new(text),
+        Text::new("Press 'P' to toggle orthographic/perspective camera"),
         Node {
             position_type: PositionType::Absolute,
             top: px(12),
@@ -204,17 +186,24 @@ fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {
         transform.rotate_y(time.delta_secs() / 2.);
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
-fn toggle_wireframe(
-    mut wireframe_config: ResMut<WireframeConfig>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-) {
-    if keyboard.just_pressed(KeyCode::Space) {
-        wireframe_config.global = !wireframe_config.global;
+
+fn toggle_projection(mut cameras: Query<&mut Projection, With<Camera3d>>) {
+    for mut projection in &mut cameras {
+        let is_perspective = matches!(*projection, Projection::Perspective(_));
+        *projection = if is_perspective {
+            Projection::Orthographic(OrthographicProjection {
+                scaling_mode: ScalingMode::FixedVertical {
+                    viewport_height: ORTHO_VIEWPORT_HEIGHT,
+                },
+                ..OrthographicProjection::default_3d()
+            })
+        } else {
+            Projection::Perspective(PerspectiveProjection::default())
+        };
     }
 }
 
-#[derive(Component, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum Row {
     Front,
     Middle,
@@ -228,20 +217,5 @@ impl Row {
             Row::Middle => 0.,
             Row::Rear => -Z_EXTENT / 2.,
         }
-    }
-
-    fn advance(self) -> Self {
-        match self {
-            Row::Front => Row::Rear,
-            Row::Middle => Row::Front,
-            Row::Rear => Row::Middle,
-        }
-    }
-}
-
-fn advance_rows(mut shapes: Query<(&mut Row, &mut Transform), With<Shape>>) {
-    for (mut row, mut transform) in &mut shapes {
-        *row = row.advance();
-        transform.translation.z = row.z();
     }
 }

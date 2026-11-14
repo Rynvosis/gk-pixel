@@ -3,14 +3,16 @@
 mod upscale;
 
 use crate::upscale::{UpscaleSettings, UpscaleSource};
-use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{CameraUpdateSystems, ImageRenderTarget, RenderTarget};
-use bevy::ecs::lifecycle::HookContext;
-use bevy::ecs::world::DeferredWorld;
-use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
-use bevy::render::view::{DebandDither, Tonemapping};
-use bevy::window::{PrimaryWindow, WindowResized};
+use bevy::{
+    asset::AssetEventSystems,
+    camera::{visibility::RenderLayers, CameraUpdateSystems, RenderTarget},
+    ecs::{lifecycle::HookContext, world::DeferredWorld},
+    prelude::*,
+    render::{
+        render_resource::TextureFormat,
+        view::{DebandDither, Tonemapping},
+    },
+};
 
 const PIXEL_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
@@ -19,10 +21,10 @@ impl Plugin for PixelPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            (fit_pixel_camera.run_if(
-                on_message::<WindowResized>.or_else(any_match_filter::<Changed<PixelCamera>>),
-            ),)
-                .before(CameraUpdateSystems),
+            fit_pixel_camera
+                //after post camera update, before asset event picks up the new image
+                .before(AssetEventSystems)
+                .after(CameraUpdateSystems),
         );
         app.add_observer(pixel_camera_added);
 
@@ -42,7 +44,7 @@ pub(crate) struct Upscales(pub Entity);
 
 #[derive(Component)]
 #[relationship_target(relationship = Upscales, linked_spawn)]
-pub(crate) struct UpscaledBy(Vec<Entity>);
+pub(crate) struct UpscaledBy(Entity);
 
 fn disable_smoothing(mut world: DeferredWorld, context: HookContext) {
     world
@@ -54,19 +56,19 @@ fn disable_smoothing(mut world: DeferredWorld, context: HookContext) {
 fn pixel_camera_added(
     add: On<Add<PixelCamera>>,
     mut commands: Commands,
-    targets: Query<(&RenderTarget, &Camera)>,
+    cameras: Query<(&RenderTarget, &Camera)>,
 ) {
-    let Ok((pixel_target, pixel_camera)) = targets.get(add.entity) else {
+    let Ok((render_target, camera)) = cameras.get(add.entity) else {
         return;
     };
     commands.spawn((
         Name::new("Upscale Camera"),
         Camera2d,
         Camera {
-            order: pixel_camera.order + 1,
+            order: camera.order + 1,
             ..default()
         },
-        pixel_target.clone(),
+        render_target.clone(),
         RenderLayers::none(),
         Tonemapping::None,
         DebandDither::Disabled,
@@ -75,69 +77,106 @@ fn pixel_camera_added(
     ));
 }
 
-// for now assuming rendering straight to window not a custom other target
-fn fit_pixel_camera(
-    mut commands: Commands,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut images: ResMut<Assets<Image>>,
-    mut cameras: Query<(
-        Entity,
-        &PixelCamera,
-        &RenderTarget,
-        &UpscaledBy,
-        &mut Projection,
-    )>,
-) {
-    let window_size = window.physical_size();
-    if window_size.min_element() == 0 {
-        return;
+struct PixelLayout {
+    pixels_per_texel: u32,
+    texels: UVec2,
+    origin: IVec2,
+}
+impl PixelLayout {
+    fn fit(target_size: UVec2, texels_tall: u32) -> Self {
+        let pixels_per_texel = (target_size.y as f32 / texels_tall as f32).round().max(1.0) as u32;
+        let texels = UVec2::new(
+            target_size.x.div_ceil(pixels_per_texel),
+            target_size.y.div_ceil(pixels_per_texel),
+        );
+        let origin = (target_size.as_ivec2() - (texels * pixels_per_texel).as_ivec2()) / 2;
+        Self {
+            pixels_per_texel,
+            texels,
+            origin,
+        }
     }
 
-    for (camera_entity, pixel_camera, render_target, upscaled_by, mut projection) in &mut cameras {
-        let Some(upscale_entity) = upscaled_by.iter().next() else {
+    fn upscale_settings(&self) -> UpscaleSettings {
+        UpscaleSettings {
+            origin: self.origin,
+            pixels_per_texel: self.pixels_per_texel as i32,
+        }
+    }
+}
+
+fn fit_pixel_camera(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    cameras: Query<(Entity, &Camera, &PixelCamera, &RenderTarget, &UpscaledBy)>,
+    upscale_cameras: Query<(&Camera, Option<&UpscaleSource>)>,
+) {
+    for (camera_entity, camera, pixel_camera, render_target, upscaled_by) in &cameras {
+        let upscale_entity = upscaled_by.0;
+        if !camera.is_active {
+            commands.entity(upscale_entity).remove::<UpscaleSource>();
+            continue;
+        }
+
+        let Ok((upscale_camera, previous_source)) = upscale_cameras.get(upscale_entity) else {
+            continue;
+        };
+        let Some(target_size) = upscale_camera
+            .physical_target_size()
+            .filter(|size| size.min_element() > 0)
+        else {
             continue;
         };
 
-        let pixels_per_texel = (window_size.y as f32 / pixel_camera.texels_tall as f32)
-            .round()
-            .max(1.0) as u32;
-        let texels = UVec2::new(
-            window_size.x.div_ceil(pixels_per_texel),
-            window_size.y.div_ceil(pixels_per_texel),
-        );
-        let origin = (window_size.as_ivec2() - (texels * pixels_per_texel).as_ivec2()) / 2;
+        let layout = PixelLayout::fit(target_size, pixel_camera.texels_tall);
 
-        let current = match render_target {
-            RenderTarget::Image(image_target)
-                if images
-                    .get(&image_target.handle)
-                    .is_some_and(|image| image.size() == texels) =>
-            {
-                Some(image_target.handle.clone())
-            }
-            _ => None,
-        };
-
-        let handle = match current {
+        let handle = match reusable_image(render_target, &images, previous_source, layout.texels) {
             Some(handle) => handle,
-            None => {
-                projection.set_changed();
-                let image =
-                    Image::new_target_texture(texels.x, texels.y, PIXEL_TEXTURE_FORMAT, None);
-                let handle = images.add(image);
-                commands
-                    .entity(camera_entity)
-                    .insert(RenderTarget::Image(ImageRenderTarget::from(handle.clone())));
-                handle
-            }
+            None => replace_render_image(
+                &mut commands,
+                &mut images,
+                camera_entity,
+                previous_source,
+                layout.texels,
+            ),
         };
 
-        commands.entity(upscale_entity).insert((
-            UpscaleSettings {
-                origin,
-                pixels_per_texel: pixels_per_texel as i32,
-            },
-            UpscaleSource(handle),
-        ));
+        commands
+            .entity(upscale_entity)
+            .insert((layout.upscale_settings(), UpscaleSource(handle)));
     }
+}
+
+fn reusable_image(
+    render_target: &RenderTarget,
+    images: &Assets<Image>,
+    previous_source: Option<&UpscaleSource>,
+    size: UVec2,
+) -> Option<Handle<Image>> {
+    let target = render_target.as_image()?;
+    let source = previous_source?;
+    let image = images.get(target)?;
+    (image.size() == size && source.0 == *target).then(|| target.clone())
+}
+
+fn replace_render_image(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    camera_entity: Entity,
+    previous_source: Option<&UpscaleSource>,
+    size: UVec2,
+) -> Handle<Image> {
+    if let Some(source) = previous_source {
+        images.remove(&source.0);
+    }
+    let handle = images.add(Image::new_target_texture(
+        size.x,
+        size.y,
+        PIXEL_TEXTURE_FORMAT,
+        None,
+    ));
+    commands
+        .entity(camera_entity)
+        .insert(RenderTarget::from(handle.clone()));
+    handle
 }
