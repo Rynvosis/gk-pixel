@@ -1,9 +1,12 @@
 #![expect(missing_docs, reason = "WIP")]
 
+mod palette;
 mod posterize;
 mod upscale;
 
-pub use crate::posterize::*;
+pub use crate::palette::PaletteSnap;
+pub use crate::posterize::Posterize;
+
 use crate::upscale::{UpscaleSettings, UpscaleSource};
 use bevy::{
     asset::AssetEventSystems,
@@ -30,7 +33,7 @@ impl Plugin for PixelPlugin {
         );
         app.add_observer(pixel_camera_added);
 
-        app.add_plugins((upscale::plugin, plugin));
+        app.add_plugins((upscale::plugin, posterize::plugin, palette::plugin));
     }
 }
 

@@ -17,12 +17,12 @@ struct Posterize {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let source_colour = textureSample(source_texture, source_sampler, in.uv);
-    let source_srgb = linear_rgb_to_srgb(source_colour.rgb);
+    let source_color = textureSample(source_texture, source_sampler, in.uv);
+    let source_srgb = linear_rgb_to_srgb(source_color.rgb);
 
     let intervals = f32(max(settings.levels, 2u) - 1u);
     let snapped_srgb = round(source_srgb * intervals) / intervals;
     let snapped_linear = srgb_to_linear_rgb(snapped_srgb);
 
-    return vec4<f32>(snapped_linear, source_colour.a);
+    return vec4<f32>(snapped_linear, source_color.a);
 }
