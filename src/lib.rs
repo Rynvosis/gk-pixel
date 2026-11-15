@@ -1,7 +1,9 @@
 #![expect(missing_docs, reason = "WIP")]
 
+mod posterize;
 mod upscale;
 
+pub use crate::posterize::*;
 use crate::upscale::{UpscaleSettings, UpscaleSource};
 use bevy::{
     asset::AssetEventSystems,
@@ -28,7 +30,7 @@ impl Plugin for PixelPlugin {
         );
         app.add_observer(pixel_camera_added);
 
-        app.add_plugins(upscale::plugin);
+        app.add_plugins((upscale::plugin, plugin));
     }
 }
 

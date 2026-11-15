@@ -1,7 +1,7 @@
 #![expect(missing_docs, reason = "WIP")]
 
 use bevy::prelude::*;
-use gk_pixel::{PixelCamera, PixelPlugin};
+use gk_pixel::{PixelCamera, PixelPlugin, Posterize};
 
 mod common;
 
@@ -17,5 +17,6 @@ fn setup(mut commands: Commands) {
         Camera3d::default(),
         Transform::from_xyz(0.0, 7., 14.0).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
         PixelCamera { texels_tall: 120 },
+        Posterize::new(6),
     ));
 }
