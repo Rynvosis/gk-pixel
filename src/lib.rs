@@ -1,9 +1,11 @@
 #![expect(missing_docs, reason = "WIP")]
 
+mod outline;
 mod palette;
 mod posterize;
 mod upscale;
 
+pub use crate::outline::PixelOutline;
 pub use crate::palette::PaletteSnap;
 pub use crate::posterize::Posterize;
 
@@ -33,7 +35,12 @@ impl Plugin for PixelPlugin {
         );
         app.add_observer(pixel_camera_added);
 
-        app.add_plugins((upscale::plugin, posterize::plugin, palette::plugin));
+        app.add_plugins((
+            upscale::plugin,
+            posterize::plugin,
+            palette::plugin,
+            outline::plugin,
+        ));
     }
 }
 
