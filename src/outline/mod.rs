@@ -33,7 +33,7 @@ pub(super) fn plugin(app: &mut App) {
         UniformComponentPlugin::<PixelOutline>::default(),
     ));
 
-    app.add_systems(PostUpdate, allow_depth_sampling);
+    app.add_systems(PostUpdate, let_pixel_outline_read_camera_depth);
 
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
@@ -62,7 +62,7 @@ struct PixelOutlinePipeline {
     depth_sampler: Sampler,
 }
 
-fn allow_depth_sampling(
+fn let_pixel_outline_read_camera_depth(
     mut cameras: Query<
         &mut Camera3d,
         (
@@ -72,9 +72,10 @@ fn allow_depth_sampling(
     >,
 ) {
     for mut camera_3d in &mut cameras {
-        let usages = TextureUsages::from(camera_3d.depth_texture_usages);
-        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera_3d.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
+        let depth_texture_usages = TextureUsages::from(camera_3d.depth_texture_usages);
+        if !depth_texture_usages.contains(TextureUsages::TEXTURE_BINDING) {
+            camera_3d.depth_texture_usages =
+                (depth_texture_usages | TextureUsages::TEXTURE_BINDING).into();
         }
     }
 }
@@ -137,7 +138,8 @@ fn pixel_outline_pass(
     component_uniforms: Res<ComponentUniforms<PixelOutline>>,
     mut ctx: RenderContext,
 ) {
-    let (view_target, uniform_index, depth_texture, view_uniform_offset) = view.into_inner();
+    let (view_target, pixel_outline_uniform_index, depth_texture, view_uniform_offset) =
+        view.into_inner();
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pixel_outline_pipeline.pipeline_id)
     else {
         return;
@@ -148,7 +150,7 @@ fn pixel_outline_pass(
     let Some(view_uniforms_binding) = view_uniforms.uniforms.binding() else {
         return;
     };
-    let depth_view = &depth_texture.attachment.texture.default_view;
+    let depth_texture_view = &depth_texture.attachment.texture.default_view;
     let post_process = view_target.post_process_write();
     let bind_group = ctx.render_device().create_bind_group(
         "pixel_outline_bind_group",
@@ -156,7 +158,7 @@ fn pixel_outline_pass(
         &BindGroupEntries::sequential((
             post_process.source,
             pixel_outline_uniforms_binding,
-            depth_view,
+            depth_texture_view,
             view_uniforms_binding,
             // normal_view,
             &pixel_outline_pipeline.depth_sampler,
@@ -180,7 +182,10 @@ fn pixel_outline_pass(
     pass.set_bind_group(
         0,
         &bind_group,
-        &[uniform_index.index(), view_uniform_offset.offset],
+        &[
+            pixel_outline_uniform_index.index(),
+            view_uniform_offset.offset,
+        ],
     );
     pass.draw(0..3, 0..1);
 }
