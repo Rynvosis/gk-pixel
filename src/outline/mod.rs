@@ -52,7 +52,7 @@ pub(super) fn plugin(app: &mut App) {
 #[extract_app(RenderApp)]
 pub struct PixelOutline {
     pub color: Vec4,
-    pub depth_threshold: f32,
+    pub threshold: f32,
 }
 
 #[derive(Resource)]

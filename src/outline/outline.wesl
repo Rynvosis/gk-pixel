@@ -1,9 +1,15 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
-import bevy_render::view::{View, depth_ndc_to_view_z};
+import bevy_render::view::{
+    View,
+    depth_ndc_to_view_z,
+    frag_coord_to_ndc,
+    frag_coord_to_uv,
+    position_ndc_to_view,
+};
 
 struct PixelOutline {
     color: vec4<f32>,
-    depth_threshold: f32,
+    threshold: f32,
 }
 
 @group(0) @binding(0)
@@ -17,23 +23,48 @@ var<uniform> view: View;
 @group(0) @binding(4)
 var depth_sampler: sampler;
 
-fn distance_from_camera_at(texel: vec2<i32>) -> f32 {
-    let uv = (vec2<f32>(texel) + 0.5) / vec2<f32>(textureDimensions(depth_texture));
-    // depth read with sampler for WebGL2 compat
-    let raw_depth = textureSampleLevel(depth_texture, depth_sampler, uv, 0.0).x;
+const EMPTY_RAW_DEPTH: f32 = 1e-6;
+
+fn frag_coord_to_raw_depth(frag_coord_xy: vec2<f32>) -> f32 {
+    let raw_depth = textureSampleLevel(
+            depth_texture,
+            depth_sampler,
+            frag_coord_to_uv(frag_coord_xy, view.viewport),
+            0.0,
+        ).x;
+    return max(raw_depth, EMPTY_RAW_DEPTH);
+}
+
+fn frag_coord_to_camera_distance(frag_coord: vec4<f32>) -> f32 {
+    return raw_depth_to_camera_distance(frag_coord_to_raw_depth(frag_coord.xy));
+}
+
+fn raw_depth_to_camera_distance(raw_depth: f32) -> f32 {
     return -depth_ndc_to_view_z(raw_depth, view.clip_from_view, view.view_from_clip);
 }
 
-fn is_outline(texel: vec2<i32>) -> bool {
-    let distance_from_camera = distance_from_camera_at(texel);
-    let axes = array(vec2(1, 0), vec2(0, 1));
+fn frag_coord_to_view_position(frag_coord: vec4<f32>) -> vec3<f32> {
+    return position_ndc_to_view(frag_coord_to_ndc(frag_coord, view.viewport), view.view_from_clip);
+}
+
+fn frag_coord_is_outline(frag_coord: vec4<f32>) -> bool {
+    let raw_depth = frag_coord_to_raw_depth(frag_coord.xy);
+    let camera_distance = raw_depth_to_camera_distance(raw_depth);
+    let frag_coord_with_raw_depth = vec4<f32>(frag_coord.xy, raw_depth, frag_coord.w);
+
+    let axes = array(vec2(1.0, 0.0), vec2(0.0, 1.0));
     for(var i = 0; i < 2; i++) {
-        let axis = axes[i];
-        // Edge check with slope, so steep faces dont create false positives.
+        let offset = vec4<f32>(axes[i], 0.0, 0.0);
+
+        let texel_size = distance(
+                frag_coord_to_view_position(frag_coord_with_raw_depth + offset),
+                frag_coord_to_view_position(frag_coord_with_raw_depth - offset),
+            ) / 2.0;
+
         let distance_behind_neighbors =
-            2 * distance_from_camera - distance_from_camera_at(texel + axis)
-            - distance_from_camera_at(texel - axis);
-        if distance_behind_neighbors > settings.depth_threshold {
+            2.0 * camera_distance - frag_coord_to_camera_distance(frag_coord + offset)
+            - frag_coord_to_camera_distance(frag_coord - offset);
+        if distance_behind_neighbors > settings.threshold * texel_size {
             return true;
         }
     }
@@ -42,10 +73,9 @@ fn is_outline(texel: vec2<i32>) -> bool {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let texel = vec2<i32>(in.position.xy);
-    let scene = textureLoad(source_texture, texel, 0);
-    if is_outline(texel) {
-        return vec4(mix(scene.rgb, settings.color.rgb, settings.color.a), 1.0);
+    let scene_color = textureLoad(source_texture, vec2<i32>(in.position.xy), 0);
+    if frag_coord_is_outline(in.position) {
+        return vec4(mix(scene_color.rgb, settings.color.rgb, settings.color.a), 1.0);
     }
-    return scene;
+    return scene_color;
 }

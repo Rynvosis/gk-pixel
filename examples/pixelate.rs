@@ -54,7 +54,7 @@ fn setup(mut commands: Commands) {
         ]),
         PixelOutline {
             color: (Vec4::W + Vec4::X),
-            depth_threshold: 0.05,
+            threshold: 3.0,
         },
     ));
 }
