@@ -1,11 +1,11 @@
 #![expect(missing_docs, reason = "WIP")]
 
-mod outline;
+mod edges;
 mod palette;
 mod posterize;
 mod upscale;
 
-pub use crate::outline::PixelOutline;
+pub use crate::edges::PixelOutline;
 pub use crate::palette::PaletteSnap;
 pub use crate::posterize::Posterize;
 
@@ -39,7 +39,7 @@ impl Plugin for PixelPlugin {
             upscale::plugin,
             posterize::plugin,
             palette::plugin,
-            outline::plugin,
+            edges::plugin,
         ));
     }
 }

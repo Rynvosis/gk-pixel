@@ -52,9 +52,6 @@ fn setup(mut commands: Commands) {
             Srgba::hex("30e1b9").unwrap(),
             Srgba::hex("8ff8e2").unwrap(),
         ]),
-        PixelOutline {
-            color: (Vec4::W + Vec4::X),
-            threshold: 3.0,
-        },
+        PixelOutline::default(),
     ));
 }

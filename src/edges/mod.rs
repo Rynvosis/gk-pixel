@@ -9,12 +9,12 @@ use bevy::{
     },
     prelude::*,
     render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        extract_component::ExtractComponentPlugin,
         render_resource::{
             binding_types::{sampler, texture_2d, uniform_buffer},
             BindGroupEntries, BindGroupLayoutEntries, PipelineCache, RenderPassColorAttachment,
             RenderPassDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-            ShaderType, TextureSampleType, TextureUsages,
+            TextureSampleType,
         },
         renderer::{RenderContext, RenderDevice, ViewQuery},
         uniform::{ComponentUniforms, DynamicUniformIndex, UniformComponentPlugin},
@@ -23,10 +23,15 @@ use bevy::{
     },
 };
 
-use crate::{PaletteSnap, PIXEL_TEXTURE_FORMAT};
+mod outlines;
+
+pub use crate::edges::outlines::PixelOutline;
+use crate::{
+    edges::outlines::let_pixel_outline_read_camera_depth, PaletteSnap, PIXEL_TEXTURE_FORMAT,
+};
 
 pub(super) fn plugin(app: &mut App) {
-    embedded_asset!(app, "outline.wesl");
+    embedded_asset!(app, "edges.wesl");
 
     app.add_plugins((
         ExtractComponentPlugin::<PixelOutline>::default(),
@@ -37,10 +42,10 @@ pub(super) fn plugin(app: &mut App) {
 
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
-            .add_systems(RenderStartup, init_pixel_outline_pipeline)
+            .add_systems(RenderStartup, init_pixel_edges_pipeline)
             .add_systems(
                 Core3d,
-                pixel_outline_pass
+                pixel_edges_pass
                     .in_set(Core3dSystems::PostProcess)
                     .after(tonemapping)
                     .after(fullscreen_material_system::<PaletteSnap>),
@@ -48,39 +53,14 @@ pub(super) fn plugin(app: &mut App) {
     }
 }
 
-#[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
-#[extract_app(RenderApp)]
-pub struct PixelOutline {
-    pub color: Vec4,
-    pub threshold: f32,
-}
-
 #[derive(Resource)]
-struct PixelOutlinePipeline {
+struct PixelEdgesPipeline {
     bind_group_layout: BindGroupLayoutDescriptor,
     pipeline_id: CachedRenderPipelineId,
     depth_sampler: Sampler,
 }
 
-fn let_pixel_outline_read_camera_depth(
-    mut cameras: Query<
-        &mut Camera3d,
-        (
-            With<PixelOutline>,
-            Or<(Added<PixelOutline>, Changed<Camera3d>)>,
-        ),
-    >,
-) {
-    for mut camera_3d in &mut cameras {
-        let depth_texture_usages = TextureUsages::from(camera_3d.depth_texture_usages);
-        if !depth_texture_usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera_3d.depth_texture_usages =
-                (depth_texture_usages | TextureUsages::TEXTURE_BINDING).into();
-        }
-    }
-}
-
-fn init_pixel_outline_pipeline(
+fn init_pixel_edges_pipeline(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
@@ -88,7 +68,7 @@ fn init_pixel_outline_pipeline(
     render_device: Res<RenderDevice>,
 ) {
     let bind_group_layout = BindGroupLayoutDescriptor::new(
-        "pixel_outline_layout",
+        "pixel_edges_layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::FRAGMENT,
             (
@@ -102,30 +82,30 @@ fn init_pixel_outline_pipeline(
     );
 
     let depth_sampler = render_device.create_sampler(&SamplerDescriptor {
-        label: Some("pixel_outline_depth_sampler"),
+        label: Some("pixel_edges_depth_sampler"),
         ..default()
     });
 
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("pixel_outline_pipeline".into()),
+        label: Some("pixel_edges_pipeline".into()),
         layout: vec![bind_group_layout.clone()],
         vertex: fullscreen_shader.to_vertex_state(),
         fragment: Some(FragmentState {
-            shader: load_embedded_asset!(asset_server.as_ref(), "outline.wesl"),
+            shader: load_embedded_asset!(asset_server.as_ref(), "edges.wesl"),
             targets: vec![Some(PIXEL_TEXTURE_FORMAT.into())],
             ..default()
         }),
         ..default()
     });
 
-    commands.insert_resource(PixelOutlinePipeline {
+    commands.insert_resource(PixelEdgesPipeline {
         bind_group_layout,
         pipeline_id,
         depth_sampler,
     });
 }
 
-fn pixel_outline_pass(
+fn pixel_edges_pass(
     view: ViewQuery<(
         &ViewTarget,
         &DynamicUniformIndex<PixelOutline>,
@@ -133,14 +113,14 @@ fn pixel_outline_pass(
         &ViewUniformOffset,
     )>,
     view_uniforms: Res<ViewUniforms>,
-    pixel_outline_pipeline: Res<PixelOutlinePipeline>,
+    pixel_edges_pipeline: Res<PixelEdgesPipeline>,
     pipeline_cache: Res<PipelineCache>,
     component_uniforms: Res<ComponentUniforms<PixelOutline>>,
     mut ctx: RenderContext,
 ) {
     let (view_target, pixel_outline_uniform_index, depth_texture, view_uniform_offset) =
         view.into_inner();
-    let Some(pipeline) = pipeline_cache.get_render_pipeline(pixel_outline_pipeline.pipeline_id)
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(pixel_edges_pipeline.pipeline_id)
     else {
         return;
     };
@@ -153,22 +133,22 @@ fn pixel_outline_pass(
     let depth_texture_view = &depth_texture.attachment.texture.default_view;
     let post_process = view_target.post_process_write();
     let bind_group = ctx.render_device().create_bind_group(
-        "pixel_outline_bind_group",
-        &pipeline_cache.get_bind_group_layout(&pixel_outline_pipeline.bind_group_layout),
+        "pixel_edges_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pixel_edges_pipeline.bind_group_layout),
         &BindGroupEntries::sequential((
             post_process.source,
             pixel_outline_uniforms_binding,
             depth_texture_view,
             view_uniforms_binding,
             // normal_view,
-            &pixel_outline_pipeline.depth_sampler,
+            &pixel_edges_pipeline.depth_sampler,
         )),
     );
 
     let mut pass = ctx
         .command_encoder()
         .begin_render_pass(&RenderPassDescriptor {
-            label: Some("pixel_outline_pass"),
+            label: Some("pixel_edges_pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: post_process.destination,
                 depth_slice: None,
