@@ -4,24 +4,24 @@ import bevy_render::view::{
     depth_ndc_to_view_z,
     frag_coord_to_ndc,
     frag_coord_to_uv,
-    position_ndc_to_view,
+    position_ndc_to_view
 };
+
+@group(0) @binding(0)
+var source_texture: texture_2d<f32>;
+@group(0) @binding(1)
+var depth_texture: texture_2d<f32>;
+@group(0) @binding(2)
+var<uniform> view: View;
+@group(0) @binding(3)
+var depth_sampler: sampler;
 
 struct PixelOutline {
     color: vec4<f32>,
     threshold: f32,
 }
-
-@group(0) @binding(0)
-var source_texture: texture_2d<f32>;
-@group(0) @binding(1)
-var<uniform> settings: PixelOutline;
-@group(0) @binding(2)
-var depth_texture: texture_2d<f32>;
-@group(0) @binding(3)
-var<uniform> view: View;
-@group(0) @binding(4)
-var depth_sampler: sampler;
+@group(1) @binding(0)
+var<uniform> outline_settings: PixelOutline;
 
 const EMPTY_RAW_DEPTH: f32 = 1e-6;
 
@@ -64,7 +64,7 @@ fn frag_coord_is_outline(frag_coord: vec4<f32>) -> bool {
         let distance_behind_neighbors =
             2.0 * camera_distance - frag_coord_to_camera_distance(frag_coord + offset)
             - frag_coord_to_camera_distance(frag_coord - offset);
-        if distance_behind_neighbors > settings.threshold * texel_size {
+        if distance_behind_neighbors > outline_settings.threshold * texel_size {
             return true;
         }
     }
@@ -75,7 +75,10 @@ fn frag_coord_is_outline(frag_coord: vec4<f32>) -> bool {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let scene_color = textureLoad(source_texture, vec2<i32>(in.position.xy), 0);
     if frag_coord_is_outline(in.position) {
-        return vec4(mix(scene_color.rgb, settings.color.rgb, settings.color.a), 1.0);
+        return vec4(
+                mix(scene_color.rgb, outline_settings.color.rgb, outline_settings.color.a),
+                1.0,
+            );
     }
     return scene_color;
 }

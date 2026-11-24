@@ -9,15 +9,13 @@ use bevy::{
     },
     prelude::*,
     render::{
-        extract_component::ExtractComponentPlugin,
         render_resource::{
             binding_types::{sampler, texture_2d, uniform_buffer},
             BindGroupEntries, BindGroupLayoutEntries, PipelineCache, RenderPassColorAttachment,
             RenderPassDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-            TextureSampleType,
+            TextureSampleType, TextureUsages,
         },
         renderer::{RenderContext, RenderDevice, ViewQuery},
-        uniform::{ComponentUniforms, DynamicUniformIndex, UniformComponentPlugin},
         view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
         RenderApp, RenderStartup,
     },
@@ -27,18 +25,15 @@ mod outlines;
 
 pub use crate::edges::outlines::PixelOutline;
 use crate::{
-    edges::outlines::let_pixel_outline_read_camera_depth, PaletteSnap, PIXEL_TEXTURE_FORMAT,
+    edges::outlines::{PixelOutlineBindGroup, PixelOutlineBindGroupLayout},
+    PaletteSnap, PIXEL_TEXTURE_FORMAT,
 };
 
 pub(super) fn plugin(app: &mut App) {
     embedded_asset!(app, "edges.wesl");
+    app.add_plugins((outlines::plugin,));
 
-    app.add_plugins((
-        ExtractComponentPlugin::<PixelOutline>::default(),
-        UniformComponentPlugin::<PixelOutline>::default(),
-    ));
-
-    app.add_systems(PostUpdate, let_pixel_outline_read_camera_depth);
+    app.add_systems(PostUpdate, let_pixel_edges_read_camera_depth);
 
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app
@@ -66,6 +61,7 @@ fn init_pixel_edges_pipeline(
     fullscreen_shader: Res<FullscreenShader>,
     pipeline_cache: Res<PipelineCache>,
     render_device: Res<RenderDevice>,
+    pixel_outline_layout: Res<PixelOutlineBindGroupLayout>,
 ) {
     let bind_group_layout = BindGroupLayoutDescriptor::new(
         "pixel_edges_layout",
@@ -73,7 +69,6 @@ fn init_pixel_edges_pipeline(
             ShaderStages::FRAGMENT,
             (
                 texture_2d(TextureSampleType::Float { filterable: false }),
-                uniform_buffer::<PixelOutline>(true),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 uniform_buffer::<ViewUniform>(true),
                 sampler(SamplerBindingType::NonFiltering),
@@ -88,7 +83,7 @@ fn init_pixel_edges_pipeline(
 
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("pixel_edges_pipeline".into()),
-        layout: vec![bind_group_layout.clone()],
+        layout: vec![bind_group_layout.clone(), pixel_outline_layout.0.clone()],
         vertex: fullscreen_shader.to_vertex_state(),
         fragment: Some(FragmentState {
             shader: load_embedded_asset!(asset_server.as_ref(), "edges.wesl"),
@@ -108,42 +103,27 @@ fn init_pixel_edges_pipeline(
 fn pixel_edges_pass(
     view: ViewQuery<(
         &ViewTarget,
-        &DynamicUniformIndex<PixelOutline>,
+        &PixelOutlineBindGroup,
         &ViewDepthStencilTexture,
         &ViewUniformOffset,
     )>,
     view_uniforms: Res<ViewUniforms>,
     pixel_edges_pipeline: Res<PixelEdgesPipeline>,
     pipeline_cache: Res<PipelineCache>,
-    component_uniforms: Res<ComponentUniforms<PixelOutline>>,
+    render_device: Res<RenderDevice>,
     mut ctx: RenderContext,
 ) {
-    let (view_target, pixel_outline_uniform_index, depth_texture, view_uniform_offset) =
+    let (view_target, pixel_outline_bind_group, depth_texture, view_uniform_offset) =
         view.into_inner();
+    let Some(view_uniforms_binding) = view_uniforms.uniforms.binding() else {
+        return;
+    };
+
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pixel_edges_pipeline.pipeline_id)
     else {
         return;
     };
-    let Some(pixel_outline_uniforms_binding) = component_uniforms.uniforms().binding() else {
-        return;
-    };
-    let Some(view_uniforms_binding) = view_uniforms.uniforms.binding() else {
-        return;
-    };
-    let depth_texture_view = &depth_texture.attachment.texture.default_view;
     let post_process = view_target.post_process_write();
-    let bind_group = ctx.render_device().create_bind_group(
-        "pixel_edges_bind_group",
-        &pipeline_cache.get_bind_group_layout(&pixel_edges_pipeline.bind_group_layout),
-        &BindGroupEntries::sequential((
-            post_process.source,
-            pixel_outline_uniforms_binding,
-            depth_texture_view,
-            view_uniforms_binding,
-            // normal_view,
-            &pixel_edges_pipeline.depth_sampler,
-        )),
-    );
 
     let mut pass = ctx
         .command_encoder()
@@ -159,13 +139,44 @@ fn pixel_edges_pass(
         });
 
     pass.set_pipeline(pipeline);
-    pass.set_bind_group(
-        0,
-        &bind_group,
-        &[
-            pixel_outline_uniform_index.index(),
-            view_uniform_offset.offset,
-        ],
+
+    let depth_texture_view = &depth_texture.attachment.texture.default_view;
+    // Basic bind group things used by outlines/creases and/or just passthrough
+    let pixel_edges_bind_group = render_device.create_bind_group(
+        "pixel_edges_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pixel_edges_pipeline.bind_group_layout),
+        &BindGroupEntries::sequential((
+            post_process.source,
+            depth_texture_view,
+            view_uniforms_binding,
+            &pixel_edges_pipeline.depth_sampler,
+        )),
     );
+    pass.set_bind_group(0, &pixel_edges_bind_group, &[view_uniform_offset.offset]);
+
+    pass.set_bind_group(
+        1,
+        &pixel_outline_bind_group.bind_group,
+        &[pixel_outline_bind_group.uniform_index],
+    );
+
     pass.draw(0..3, 0..1);
+}
+
+fn let_pixel_edges_read_camera_depth(
+    mut cameras: Query<
+        &mut Camera3d,
+        (
+            With<PixelOutline>,
+            Or<(Added<PixelOutline>, Changed<Camera3d>)>,
+        ),
+    >,
+) {
+    for mut camera_3d in &mut cameras {
+        let depth_texture_usages = TextureUsages::from(camera_3d.depth_texture_usages);
+        if !depth_texture_usages.contains(TextureUsages::TEXTURE_BINDING) {
+            camera_3d.depth_texture_usages =
+                (depth_texture_usages | TextureUsages::TEXTURE_BINDING).into();
+        }
+    }
 }

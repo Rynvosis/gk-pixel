@@ -1,11 +1,11 @@
 //! todo docs
-
 use std::f32::consts::PI;
 
 use bevy::{
-    camera::ScalingMode, color::palettes::basic::SILVER,
+    camera::ScalingMode, color::palettes::basic::SILVER, ecs::entity::EntityHashMap,
     input::common_conditions::input_just_pressed, prelude::*,
 };
+use gk_pixel::{PixelCamera, PixelOutline};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Startup, setup).add_systems(
@@ -13,6 +13,7 @@ pub(super) fn plugin(app: &mut App) {
         (
             rotate,
             toggle_projection.run_if(input_just_pressed(KeyCode::KeyP)),
+            toggle_outlines.run_if(input_just_pressed(KeyCode::KeyO)),
         ),
     );
 }
@@ -171,7 +172,10 @@ fn setup(
     ));
 
     commands.spawn((
-        Text::new("Press 'P' to toggle orthographic/perspective camera"),
+        Text::new(
+            "Press 'P' to toggle orthographic/perspective camera\n\
+            Press 'O' to toggle outlines",
+        ),
         Node {
             position_type: PositionType::Absolute,
             top: px(12),
@@ -200,6 +204,23 @@ fn toggle_projection(mut cameras: Query<&mut Projection, With<Camera3d>>) {
         } else {
             Projection::Perspective(PerspectiveProjection::default())
         };
+    }
+}
+
+fn toggle_outlines(
+    mut commands: Commands,
+    pixel_cameras: Query<(Entity, Option<&PixelOutline>), With<PixelCamera>>,
+    mut outline_stash: Local<EntityHashMap<PixelOutline>>,
+) {
+    for (entity, maybe_outline) in &pixel_cameras {
+        if let Some(outline) = maybe_outline {
+            outline_stash.insert(entity, *outline);
+            commands.entity(entity).remove::<PixelOutline>();
+        } else {
+            commands
+                .entity(entity)
+                .insert(outline_stash.remove(&entity).unwrap_or_default());
+        }
     }
 }
 
