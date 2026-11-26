@@ -5,7 +5,7 @@ use bevy::{
     camera::ScalingMode, color::palettes::basic::SILVER, ecs::entity::EntityHashMap,
     input::common_conditions::input_just_pressed, prelude::*,
 };
-use gk_pixel::{PixelCamera, PixelOutline};
+use gk_pixel::{PixelCamera, PixelCreases, PixelOutlines};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Startup, setup).add_systems(
@@ -13,6 +13,7 @@ pub(super) fn plugin(app: &mut App) {
         (
             rotate,
             toggle_projection.run_if(input_just_pressed(KeyCode::KeyP)),
+            toggle_creases.run_if(input_just_pressed(KeyCode::KeyC)),
             toggle_outlines.run_if(input_just_pressed(KeyCode::KeyO)),
         ),
     );
@@ -174,7 +175,8 @@ fn setup(
     commands.spawn((
         Text::new(
             "Press 'P' to toggle orthographic/perspective camera\n\
-            Press 'O' to toggle outlines",
+            Press 'O' to toggle outlines\n\
+            Press 'C' to toggle creases",
         ),
         Node {
             position_type: PositionType::Absolute,
@@ -209,17 +211,34 @@ fn toggle_projection(mut cameras: Query<&mut Projection, With<Camera3d>>) {
 
 fn toggle_outlines(
     mut commands: Commands,
-    pixel_cameras: Query<(Entity, Option<&PixelOutline>), With<PixelCamera>>,
-    mut outline_stash: Local<EntityHashMap<PixelOutline>>,
+    pixel_cameras: Query<(Entity, Option<&PixelOutlines>), With<PixelCamera>>,
+    mut outlines_stash: Local<EntityHashMap<PixelOutlines>>,
 ) {
-    for (entity, maybe_outline) in &pixel_cameras {
-        if let Some(outline) = maybe_outline {
-            outline_stash.insert(entity, *outline);
-            commands.entity(entity).remove::<PixelOutline>();
+    for (entity, maybe_outlines) in &pixel_cameras {
+        if let Some(outlines) = maybe_outlines {
+            outlines_stash.insert(entity, *outlines);
+            commands.entity(entity).remove::<PixelOutlines>();
         } else {
             commands
                 .entity(entity)
-                .insert(outline_stash.remove(&entity).unwrap_or_default());
+                .insert(outlines_stash.remove(&entity).unwrap_or_default());
+        }
+    }
+}
+
+fn toggle_creases(
+    mut commands: Commands,
+    pixel_cameras: Query<(Entity, Option<&PixelCreases>), With<PixelCamera>>,
+    mut creases_stash: Local<EntityHashMap<PixelCreases>>,
+) {
+    for (entity, maybe_creases) in &pixel_cameras {
+        if let Some(creases) = maybe_creases {
+            creases_stash.insert(entity, *creases);
+            commands.entity(entity).remove::<PixelCreases>();
+        } else {
+            commands
+                .entity(entity)
+                .insert(creases_stash.remove(&entity).unwrap_or_default());
         }
     }
 }

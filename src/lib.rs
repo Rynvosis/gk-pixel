@@ -5,7 +5,7 @@ mod palette;
 mod posterize;
 mod upscale;
 
-pub use crate::edges::PixelOutline;
+pub use crate::edges::{PixelCreases, PixelEdgesThreshold, PixelOutlines};
 pub use crate::palette::PaletteSnap;
 pub use crate::posterize::Posterize;
 

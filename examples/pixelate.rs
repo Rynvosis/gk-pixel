@@ -1,7 +1,7 @@
 #![expect(missing_docs, reason = "WIP")]
 
 use bevy::prelude::*;
-use gk_pixel::{PaletteSnap, PixelCamera, PixelOutline, PixelPlugin};
+use gk_pixel::{PaletteSnap, PixelCamera, PixelCreases, PixelOutlines, PixelPlugin};
 
 mod common;
 
@@ -52,6 +52,7 @@ fn setup(mut commands: Commands) {
             Srgba::hex("30e1b9").unwrap(),
             Srgba::hex("8ff8e2").unwrap(),
         ]),
-        PixelOutline::default(),
+        PixelCreases::default(),
+        PixelOutlines::default(),
     ));
 }
